@@ -17,10 +17,15 @@ export default function Login() {
     event.preventDefault(); setBusy(true);
     try {
       const response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
-      if (response.status === 204) { sessionStorage.setItem('chainwatch_login_success', '1'); window.location.assign('/'); return; }
+      if (response.status === 204) {
+        toast.add({ type: 'success', title: '登录成功', description: '正在打开监控仪表盘。' });
+        await new Promise((resolve) => setTimeout(resolve, 1400));
+        window.location.assign('/');
+        return;
+      }
       toast.add({ type: 'error', title: '登录失败', description: response.status === 429 ? '尝试次数过多，请稍后再试。' : '用户名或密码错误。' });
     } catch { toast.add({ type: 'error', title: '连接失败', description: '无法连接监控中心。' }); }
     finally { setBusy(false); }
   }
-  return <main className="flex min-h-screen items-center justify-center bg-background px-4"><div className="w-full max-w-sm"><div className="mb-6 flex items-center justify-center gap-2"><Activity aria-hidden="true" /><span className="text-xl font-semibold">Chainwatch</span><Badge variant="secondary">v0.2.2</Badge></div><Card><CardHeader><CardTitle>登录监控仪表盘</CardTitle><CardDescription>查看链路、流量与故障证据</CardDescription></CardHeader><CardContent><form id="login-form" onSubmit={submit}><FieldGroup><Field><FieldLabel htmlFor="username">用户名</FieldLabel><Input id="username" autoComplete="username" required maxLength={128} value={username} onChange={(e) => setUsername(e.target.value)} /></Field><Field><FieldLabel htmlFor="password">密码</FieldLabel><Input id="password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} /></Field></FieldGroup></form></CardContent><CardFooter><Button type="submit" form="login-form" className="w-full" disabled={busy}><LockKeyhole data-icon="inline-start" />{busy ? '登录中…' : '登录'}</Button></CardFooter></Card><p className="mt-4 text-center text-xs text-muted-foreground">仅通过 HTTPS 提供登录。会话 12 小时后过期。</p></div></main>;
+  return <main className="flex min-h-screen items-center justify-center bg-background px-4"><div className="w-full max-w-sm"><div className="mb-6 flex items-center justify-center gap-2"><Activity aria-hidden="true" /><span className="text-xl font-semibold">Chainwatch</span><Badge variant="secondary">v0.2.3</Badge></div><Card><CardHeader><CardTitle>登录监控仪表盘</CardTitle><CardDescription>查看链路、流量与故障证据</CardDescription></CardHeader><CardContent><form id="login-form" onSubmit={submit}><FieldGroup><Field><FieldLabel htmlFor="username">用户名</FieldLabel><Input id="username" autoComplete="username" required maxLength={128} value={username} onChange={(e) => setUsername(e.target.value)} /></Field><Field><FieldLabel htmlFor="password">密码</FieldLabel><Input id="password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={(e) => setPassword(e.target.value)} /></Field></FieldGroup></form></CardContent><CardFooter><Button type="submit" form="login-form" className="w-full" disabled={busy}><LockKeyhole data-icon="inline-start" />{busy ? '登录中…' : '登录'}</Button></CardFooter></Card><p className="mt-4 text-center text-xs text-muted-foreground">仅通过 HTTPS 提供登录。会话 12 小时后过期。</p></div></main>;
 }
