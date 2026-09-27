@@ -25,7 +25,7 @@ The dashboard uses [shadcn/ui](https://ui.shadcn.com/) components and its Rechar
 
 ## Versions and login
 
-`v0.1.0` is legacy. Use `v0.2.1` or newer: the dashboard shows hub, agent, frontend, and build versions. The build version is the Git commit SHA injected by Actions. Old agents are rejected with HTTP 426 and must be upgraded alongside the hub; historical records without version fields show `legacy · 请更新新版`. Each future change increments the version as specified in [AGENTS.md](AGENTS.md).
+`v0.1.0` is legacy. Use `v0.2.2` or newer: the dashboard shows hub, agent, frontend, and build versions. The build version is the Git commit SHA injected by Actions. Old agents are rejected with HTTP 426 and must be upgraded alongside the hub; historical records without version fields show `legacy · 请更新新版`. Each future change increments the version as specified in [AGENTS.md](AGENTS.md).
 
 The dashboard has a shadcn/ui login page. A successful HTTPS login issues a 12-hour Secure, HttpOnly, SameSite=Strict session cookie; restarting the hub invalidates sessions. The old browser Basic Auth prompt is removed.
 

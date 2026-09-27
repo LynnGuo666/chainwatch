@@ -45,8 +45,8 @@ type app struct {
 	csp        string
 }
 
-const appVersion = "0.2.1"
-const frontendVersion = "0.2.1"
+const appVersion = "0.2.2"
+const frontendVersion = "0.2.2"
 
 // Set by CI using -ldflags; local builds are deliberately identifiable.
 var buildVersion = "dev"

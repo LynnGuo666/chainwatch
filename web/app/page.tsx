@@ -13,6 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { toast } from '@/components/ui/toast';
 
 type Node = { id: string; name: string };
 type Metric = { link_id: string; link_name: string; target: string; address: string; protocol: string; ping?: { loss_pct: number; avg_ms: number }; tcp?: { success_pct: number; avg_ms: number }; tailscale?: { path: string; online: boolean }; rx_delta?: number; tx_delta?: number };
@@ -62,6 +63,12 @@ export default function Dashboard() {
       const [n, s, h, hh, hosts, d, m, v] = await Promise.all(responses.map((r) => r.json()));
       setNodes(n); setSnapshot(s); setHistory(h); setHourly(hh); setHostHourly(hosts); setIncidents(d); setMtrs(m); setVersions(v); setUpdated(Date.now()); setError('');
     } catch (e) { setError(e instanceof Error ? e.message : '连接失败'); }
+  }, []);
+  useEffect(() => {
+    if (sessionStorage.getItem('chainwatch_login_success') === '1') {
+      sessionStorage.removeItem('chainwatch_login_success');
+      toast.add({ type: 'success', title: '登录成功', description: '监控数据已连接。' });
+    }
   }, []);
   useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 30000); return () => clearInterval(timer); }, [refresh]);
   const name = (id: string) => nodes.find((n) => n.id === id)?.name || id;
