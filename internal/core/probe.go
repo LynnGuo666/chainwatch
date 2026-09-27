@@ -32,13 +32,15 @@ type Tail struct {
 	TXBytes  int64  `json:"tx_bytes"`
 }
 type System struct {
-	Load1      float64 `json:"load_1m"`
-	MemoryPct  float64 `json:"memory_pct"`
-	DiskPct    float64 `json:"disk_pct"`
-	NICRX      int64   `json:"nic_rx_bytes"`
-	NICTX      int64   `json:"nic_tx_bytes"`
-	NICRXDelta int64   `json:"nic_rx_delta"`
-	NICTXDelta int64   `json:"nic_tx_delta"`
+	Version      string  `json:"version,omitempty"`
+	BuildVersion string  `json:"build_version,omitempty"`
+	Load1        float64 `json:"load_1m"`
+	MemoryPct    float64 `json:"memory_pct"`
+	DiskPct      float64 `json:"disk_pct"`
+	NICRX        int64   `json:"nic_rx_bytes"`
+	NICTX        int64   `json:"nic_tx_bytes"`
+	NICRXDelta   int64   `json:"nic_rx_delta"`
+	NICTXDelta   int64   `json:"nic_tx_delta"`
 }
 type MTR struct {
 	Target string          `json:"target"`

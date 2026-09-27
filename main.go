@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -38,7 +39,15 @@ type app struct {
 	mu         sync.Mutex
 	rate       map[string][]time.Time
 	rateMu     sync.Mutex
+	sessions   map[string]time.Time
+	sessionMu  sync.Mutex
 }
+
+const appVersion = "0.2.0"
+const frontendVersion = "0.2.0"
+
+// Set by CI using -ldflags; local builds are deliberately identifiable.
+var buildVersion = "dev"
 
 func main() {
 	syscall.Umask(0077)
@@ -73,7 +82,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	a := &app{cfg: cfg, lastMTR: map[string]time.Time{}, rate: map[string][]time.Time{}, httpClient: &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}}
+	a := &app{cfg: cfg, lastMTR: map[string]time.Time{}, rate: map[string][]time.Time{}, sessions: map[string]time.Time{}, httpClient: &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}}
 	if cfg.Mode == "hub" {
 		a.store, err = core.OpenStore(cfg.StoragePath, cfg.StorageMaxMB, cfg.MinFreeMB)
 		if err != nil {
@@ -91,6 +100,7 @@ func main() {
 
 func (a *app) collect() core.Report {
 	r := core.Report{NodeID: a.cfg.ID, NodeName: a.cfg.Name, TS: time.Now().Unix(), System: core.HostSystem(a.cfg.NetworkInterfaces), Metrics: make([]core.Metric, len(a.cfg.Links))}
+	r.System.Version, r.System.BuildVersion = appVersion, buildVersion
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
 	for i, l := range a.cfg.Links {
@@ -245,6 +255,10 @@ func (a *app) ingest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid report", 400)
 		return
 	}
+	if report.System.Version != appVersion {
+		http.Error(w, "agent version unsupported; update hub and agent to v"+appVersion, http.StatusUpgradeRequired)
+		return
+	}
 	if err = a.store.UseNonce(nodeID, nonce, ts); err != nil {
 		http.Error(w, "replayed report", 409)
 		return
@@ -282,29 +296,104 @@ func (a *app) fail(ip string) {
 	}
 	a.rate[ip] = append(a.rate[ip], time.Now())
 }
+func sameOrigin(r *http.Request) bool {
+	return r.Header.Get("Origin") == "https://"+r.Host
+}
+func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if !a.allow(ip) {
+		http.Error(w, "rate limit", 429)
+		return
+	}
+	if !sameOrigin(r) || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		http.Error(w, "invalid request", 403)
+		return
+	}
+	var credentials struct{ Username, Password string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&credentials); err != nil || len(credentials.Username) > 128 || len(credentials.Password) > 1024 {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(credentials.Username), []byte(a.cfg.WebUser)) != 1 || bcrypt.CompareHashAndPassword([]byte(a.cfg.WebPasswordHash), []byte(credentials.Password)) != nil {
+		a.fail(ip)
+		http.Error(w, "invalid credentials", 401)
+		return
+	}
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		http.Error(w, "session error", 500)
+		return
+	}
+	value := base64.RawURLEncoding.EncodeToString(token)
+	a.sessionMu.Lock()
+	if a.sessions == nil {
+		a.sessions = map[string]time.Time{}
+	}
+	for key, expires := range a.sessions {
+		if time.Now().After(expires) {
+			delete(a.sessions, key)
+		}
+	}
+	if len(a.sessions) >= 1024 {
+		a.sessionMu.Unlock()
+		http.Error(w, "session capacity", 503)
+		return
+	}
+	a.sessions[value] = time.Now().Add(12 * time.Hour)
+	a.sessionMu.Unlock()
+	a.rateMu.Lock()
+	delete(a.rate, ip)
+	a.rateMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "chainwatch_session", Value: value, Path: "/", MaxAge: 43200, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *app) sessionValid(r *http.Request) bool {
+	cookie, err := r.Cookie("chainwatch_session")
+	if err != nil || len(cookie.Value) != 43 {
+		return false
+	}
+	a.sessionMu.Lock()
+	expires, ok := a.sessions[cookie.Value]
+	if ok && time.Now().After(expires) {
+		delete(a.sessions, cookie.Value)
+		ok = false
+	}
+	a.sessionMu.Unlock()
+	return ok
+}
+func (a *app) logout(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		http.Error(w, "invalid origin", 403)
+		return
+	}
+	if cookie, err := r.Cookie("chainwatch_session"); err == nil {
+		a.sessionMu.Lock()
+		delete(a.sessions, cookie.Value)
+		a.sessionMu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: "chainwatch_session", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+	w.WriteHeader(http.StatusNoContent)
+}
 func (a *app) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if !a.allow(ip) {
-			http.Error(w, "rate limit", 429)
-			return
-		}
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != a.cfg.WebUser || bcrypt.CompareHashAndPassword([]byte(a.cfg.WebPasswordHash), []byte(pass)) != nil {
-			a.fail(ip)
-			w.Header().Set("WWW-Authenticate", `Basic realm="Chainwatch"`)
-			http.Error(w, "authentication required", 401)
-			return
-		}
-		a.rateMu.Lock()
-		delete(a.rate, ip)
-		a.rateMu.Unlock()
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'")
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/_next/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !a.sessionValid(r) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.Error(w, "authentication required", 401)
+			} else {
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+			}
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -318,6 +407,20 @@ func (a *app) serveWeb() {
 		log.Fatal(err)
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/login", a.login)
+	mux.HandleFunc("POST /api/logout", a.logout)
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		body, err := fs.ReadFile(sub, "login.html")
+		if err != nil {
+			http.Error(w, "login unavailable", 500)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(body)
+	})
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, map[string]string{"hub": appVersion, "frontend": frontendVersion, "build": buildVersion})
+	})
 	mux.HandleFunc("GET /api/topology", func(w http.ResponseWriter, r *http.Request) {
 		nodes := []core.Node{{ID: a.cfg.ID, Name: a.cfg.Name}}
 		for _, n := range a.cfg.Nodes {
@@ -368,6 +471,16 @@ func (a *app) serveWeb() {
 			return
 		}
 		jsonResponse(w, v)
+	})
+	mux.HandleFunc("GET /api/diagnosis", func(w http.ResponseWriter, r *http.Request) {
+		history, e1 := a.store.History(24)
+		events, e2 := a.store.Events(500)
+		mtrs, e3 := a.store.MTR(100)
+		if e1 != nil || e2 != nil || e3 != nil {
+			http.Error(w, "query error", 500)
+			return
+		}
+		jsonResponse(w, core.Diagnose(history, events, mtrs))
 	})
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	srv := &http.Server{Addr: a.cfg.ListenWeb, Handler: a.auth(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}

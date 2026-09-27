@@ -21,7 +21,13 @@ Next.js uses `output: 'export'`; `next build` writes `web/out`, which is embedde
 - Low-frequency baseline MTR and anomaly-triggered MTR with a cooldown.
 - Normal minute samples for 24 hours; hourly summaries and anomaly details for 30 days, with a bounded SQLite database.
 
-The dashboard uses [Mantine](https://mantine.dev/) components and [Recharts](https://recharts.github.io/) charts. Go serves the exported files and all read-only APIs on one HTTPS port. The report listener binds a private IP and accepts only signed reports from registered agents.
+The dashboard uses [shadcn/ui](https://ui.shadcn.com/) components and its Recharts-based chart component. It shows incident timelines, public/Tailscale and reverse-direction comparisons, and adjacent MTR data. Conclusions are evidence-ranked hypotheses; intermediate-hop ICMP loss alone is not diagnosed as an ISP failure. Go serves the exported files and all read-only APIs on one HTTPS port. The report listener binds a private IP and accepts only signed reports from registered agents.
+
+## Versions and login
+
+`v0.1.0` is legacy. Starting with `v0.2.0`, the dashboard shows hub, agent, frontend, and build versions. The build version is the Git commit SHA injected by Actions. Old agents are rejected with HTTP 426 and must be upgraded alongside the hub; historical records without version fields show `legacy · 请更新新版`. Each future change increments the version as specified in [AGENTS.md](AGENTS.md).
+
+The dashboard has a shadcn/ui login page. A successful HTTPS login issues a 12-hour Secure, HttpOnly, SameSite=Strict session cookie; restarting the hub invalidates sessions. The old browser Basic Auth prompt is removed.
 
 ## Build and deploy
 

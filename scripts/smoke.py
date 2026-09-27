@@ -2,7 +2,6 @@
 """Exercise a hub and agent using temporary keys, TLS, and localhost ports."""
 
 import argparse
-import base64
 import json
 import pathlib
 import re
@@ -64,11 +63,19 @@ def main():
                     raise AssertionError("unauthenticated API request succeeded")
                 except urllib.error.HTTPError as error:
                     assert error.code == 401
-                auth = "Basic " + base64.b64encode(("tester:" + password).encode()).decode()
+                login = urllib.request.Request(
+                    base + "/api/login",
+                    data=json.dumps({"username": "tester", "password": password}).encode(),
+                    headers={"Content-Type": "application/json", "Origin": base},
+                )
+                login_response = urllib.request.urlopen(login, context=context, timeout=2)
+                assert login_response.status == 204
+                cookie = login_response.headers["Set-Cookie"].split(";", 1)[0]
+                assert "Secure" in login_response.headers["Set-Cookie"]
                 snapshot = None
                 for _ in range(30):
                     try:
-                        request = urllib.request.Request(base + "/api/snapshot", headers={"Authorization": auth})
+                        request = urllib.request.Request(base + "/api/snapshot", headers={"Cookie": cookie})
                         snapshot = json.load(urllib.request.urlopen(request, context=context, timeout=2))
                         if len(snapshot["nodes"]) == 2 and len(snapshot["links"]) == 2:
                             break
@@ -76,14 +83,22 @@ def main():
                         pass
                     time.sleep(0.5)
                 assert snapshot and len(snapshot["nodes"]) == 2 and len(snapshot["links"]) == 2, snapshot
-                request = urllib.request.Request(base + "/", headers={"Authorization": auth})
+                assert all(node["system"]["version"] == "0.2.0" for node in snapshot["nodes"]), snapshot
+                request = urllib.request.Request(base + "/", headers={"Cookie": cookie})
                 html = urllib.request.urlopen(request, context=context, timeout=2).read().decode()
                 assert "Chainwatch" in html
                 asset = re.search(r'(?:src|href)="(/_next/static/[^"]+\.js)"', html)
                 assert asset, "Next.js bundle URL missing"
-                request = urllib.request.Request(base + asset.group(1), headers={"Authorization": auth})
+                request = urllib.request.Request(base + asset.group(1))
                 assert urllib.request.urlopen(request, context=context, timeout=2).status == 200
-                print("smoke OK: authenticated HTTPS, two reports, two links, embedded Next.js assets")
+                for path in ("/api/diagnosis", "/api/version"):
+                    request = urllib.request.Request(base + path, headers={"Cookie": cookie})
+                    response = urllib.request.urlopen(request, context=context, timeout=2)
+                    assert response.status == 200
+                    if path == "/api/version":
+                        versions = json.load(response)
+                        assert versions["hub"] == "0.2.0" and versions["frontend"] == "0.2.0"
+                print("smoke OK: HTTPS login, two reports, two links, diagnosis, versions, embedded Next.js assets")
             finally:
                 agent_proc.terminate()
                 agent_proc.wait(timeout=5)

@@ -24,6 +24,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix web
       - name: Build static Next.js export
+        env:
+          NEXT_PUBLIC_CHAINWATCH_BUILD_VERSION: ${{ github.sha }}
         run: npm run build --prefix web
       - uses: actions/setup-go@v7
         with:
@@ -38,8 +40,8 @@ jobs:
       - name: Build embedded Linux binaries
         run: |
           mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/chainwatch-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o bin/chainwatch-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${GITHUB_SHA}" -o bin/chainwatch-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${GITHUB_SHA}" -o bin/chainwatch-linux-arm64 .
           cd bin
           sha256sum chainwatch-linux-* > SHA256SUMS
       - name: Smoke-test the embedded Linux binary

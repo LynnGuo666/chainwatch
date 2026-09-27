@@ -11,6 +11,8 @@ cd .. && go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpa
 
 `web/out` is embedded in the binary. The server needs no Node.js runtime. GitHub Actions runs the same steps and uploads the Linux binary.
 
+Build `v0.2.0` hub and agents from the same commit. The hub rejects reports from legacy agents with HTTP 426, so update the agent immediately after the hub. Actions injects the commit SHA into the Go binary and frontend build.
+
 ## Configure
 
 Copy [hub.example.json](../configs/hub.example.json) and [agent.example.json](../configs/agent.example.json) to private files outside the repository. Replace every sample IP, ID, service, certificate and secret. Run `chainwatch gen-key` once per agent and put that value on the agent and in the hub's matching `nodes[].key`. Run `chainwatch hash-password` and enter a long password on stdin; put its hash in `web_password_hash`.
@@ -26,5 +28,7 @@ Start the hub with `chainwatch --config /etc/chainwatch/hub.json` and each agent
 ## HTTPS and access
 
 Do not put the dashboard on a public port before setting a strong password and TLS. IP certificates with short lifetimes must be renewed by their issuer and the hub restarted after renewal. Limit access upstream if possible. Software rate limiting does not prevent a bandwidth-saturating DDoS attack.
+
+Open `/login` to sign in. The old Basic Auth browser prompt is no longer used. Sessions expire after 12 hours and are invalidated when the hub restarts.
 
 For systemd, create a dedicated `chainwatch` system user, load private config and TLS files with `LoadCredential`, use `StateDirectory=chainwatch` with mode `0700`, and restart the hub after certificate renewal. Example units are in [`deploy/systemd`](../deploy/systemd). The hub and agent should each have a private `0600` config file. The hub stores its SQLite database and WAL under the state directory.

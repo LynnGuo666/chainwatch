@@ -25,7 +25,7 @@ func TestSignedReportAndReplay(t *testing.T) {
 	defer store.Close()
 	key := strings.Repeat("a", 48)
 	a := &app{cfg: core.Config{Nodes: []core.Node{{ID: "edge", Name: "Edge", SourceIP: "100.64.0.2", Key: key}}}, store: store}
-	report := core.Report{NodeID: "edge", NodeName: "Edge", TS: time.Now().Unix(), Metrics: []core.Metric{{LinkID: "hub", LinkName: "Hub", Target: "hub", Address: "100.64.0.1", Protocol: "tcp", TCP: &core.TCP{SuccessPct: 100}}}}
+	report := core.Report{NodeID: "edge", NodeName: "Edge", TS: time.Now().Unix(), System: core.System{Version: appVersion}, Metrics: []core.Metric{{LinkID: "hub", LinkName: "Hub", Target: "hub", Address: "100.64.0.1", Protocol: "tcp", TCP: &core.TCP{SuccessPct: 100}}}}
 	body, _ := json.Marshal(report)
 	stamp := strconv.FormatInt(time.Now().Unix(), 10)
 	nonce := strings.Repeat("a", 32)
@@ -38,7 +38,7 @@ func TestSignedReportAndReplay(t *testing.T) {
 		r.Header.Set("X-Nonce", nonce)
 		mac := hmac.New(sha256.New, []byte(key))
 		mac.Write([]byte("edge\n" + stamp + "\n" + nonce + "\n"))
-		mac.Write(body)
+		mac.Write(payload)
 		r.Header.Set("X-Signature", hex.EncodeToString(mac.Sum(nil)))
 		w := httptest.NewRecorder()
 		a.ingest(w, r)
@@ -50,35 +50,60 @@ func TestSignedReportAndReplay(t *testing.T) {
 	if w := makeRequest(body, "100.64.0.2:1234"); w.Code != 409 {
 		t.Fatalf("replay: %d", w.Code)
 	}
-	if w := makeRequest([]byte(`{"node_id":"bad"}`), "100.64.0.2:1234"); w.Code != 401 {
+	if w := makeRequest([]byte(`{"node_id":"bad"}`), "100.64.0.2:1234"); w.Code != 400 {
 		t.Fatalf("tamper: %d", w.Code)
 	}
 	if w := makeRequest(body, "203.0.113.2:1234"); w.Code != 403 {
 		t.Fatalf("source: %d", w.Code)
 	}
+	legacy := report
+	legacy.System.Version = ""
+	legacyBody, _ := json.Marshal(legacy)
+	if w := makeRequest(legacyBody, "100.64.0.2:1234"); w.Code != http.StatusUpgradeRequired {
+		t.Fatalf("legacy agent: %d", w.Code)
+	}
 }
 
-func TestDashboardRequiresPassword(t *testing.T) {
+func TestDashboardSessionLogin(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("correct-long-password-for-test"), bcrypt.MinCost)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: core.Config{WebUser: "admin", WebPasswordHash: string(hash)}, rate: map[string][]time.Time{}}
-	handler := a.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
-	wrong := httptest.NewRequest("GET", "/", nil)
+	a := &app{cfg: core.Config{WebUser: "admin", WebPasswordHash: string(hash)}, rate: map[string][]time.Time{}, sessions: map[string]time.Time{}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/login", a.login)
+	mux.HandleFunc("POST /api/logout", a.logout)
+	mux.HandleFunc("GET /api/snapshot", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	handler := a.auth(mux)
+	wrong := httptest.NewRequest("POST", "https://example.test/api/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
 	wrong.RemoteAddr = "127.0.0.1:1000"
-	wrong.SetBasicAuth("admin", "wrong")
+	wrong.Header.Set("Origin", "https://example.test")
+	wrong.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, wrong)
 	if w.Code != 401 {
 		t.Fatalf("wrong password: %d", w.Code)
 	}
-	good := httptest.NewRequest("GET", "/", nil)
+	good := httptest.NewRequest("POST", "https://example.test/api/login", strings.NewReader(`{"username":"admin","password":"correct-long-password-for-test"}`))
 	good.RemoteAddr = "127.0.0.1:1000"
-	good.SetBasicAuth("admin", "correct-long-password-for-test")
+	good.Header.Set("Origin", "https://example.test")
+	good.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, good)
+	if w.Code != 204 || len(w.Result().Cookies()) != 1 || !w.Result().Cookies()[0].HttpOnly || !w.Result().Cookies()[0].Secure {
+		t.Fatalf("login: %d %#v", w.Code, w.Result().Cookies())
+	}
+	check := httptest.NewRequest("GET", "https://example.test/api/snapshot", nil)
+	check.AddCookie(w.Result().Cookies()[0])
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, check)
 	if w.Code != 200 {
-		t.Fatalf("correct password: %d", w.Code)
+		t.Fatalf("authenticated API: %d", w.Code)
+	}
+	check = httptest.NewRequest("GET", "https://example.test/api/snapshot", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, check)
+	if w.Code != 401 {
+		t.Fatalf("unauthenticated API: %d", w.Code)
 	}
 }
