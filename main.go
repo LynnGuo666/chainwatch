@@ -26,7 +26,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-//go:embed web/out
+//go:embed all:web/out
 var site embed.FS
 
 type app struct {
@@ -336,6 +336,15 @@ func (a *app) serveWeb() {
 	mux.HandleFunc("GET /api/hourly", func(w http.ResponseWriter, r *http.Request) {
 		d, _ := strconv.Atoi(r.URL.Query().Get("days"))
 		v, e := a.store.Hourly(d)
+		if e != nil {
+			http.Error(w, "query error", 500)
+			return
+		}
+		jsonResponse(w, v)
+	})
+	mux.HandleFunc("GET /api/host-hourly", func(w http.ResponseWriter, r *http.Request) {
+		d, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		v, e := a.store.HostHourly(d)
 		if e != nil {
 			http.Error(w, "query error", 500)
 			return

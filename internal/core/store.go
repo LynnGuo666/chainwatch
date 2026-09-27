@@ -38,6 +38,7 @@ func OpenStore(path string, maxMB, minFreeMB int64) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS reports(node TEXT NOT NULL, ts INTEGER NOT NULL, name TEXT NOT NULL, system BLOB NOT NULL, PRIMARY KEY(node,ts))`,
 		`CREATE TABLE IF NOT EXISTS metrics(node TEXT NOT NULL, link TEXT NOT NULL, ts INTEGER NOT NULL, bad INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(node,link,ts))`,
 		`CREATE TABLE IF NOT EXISTS hourly(bucket INTEGER NOT NULL,node TEXT NOT NULL,link TEXT NOT NULL,n INTEGER NOT NULL,rtt_sum REAL NOT NULL,rtt_max REAL NOT NULL,loss_max REAL NOT NULL,bad_count INTEGER NOT NULL,rx INTEGER NOT NULL,tx INTEGER NOT NULL,PRIMARY KEY(bucket,node,link))`,
+		`CREATE TABLE IF NOT EXISTS host_hourly(bucket INTEGER NOT NULL,node TEXT NOT NULL,n INTEGER NOT NULL,rx INTEGER NOT NULL,tx INTEGER NOT NULL,PRIMARY KEY(bucket,node))`,
 		`CREATE TABLE IF NOT EXISTS mtr(node TEXT NOT NULL,link TEXT NOT NULL,ts INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(node,link,ts))`,
 		`CREATE TABLE IF NOT EXISTS nonces(node TEXT NOT NULL,nonce TEXT NOT NULL,ts INTEGER NOT NULL,PRIMARY KEY(node,nonce))`,
 		`CREATE INDEX IF NOT EXISTS metrics_time ON metrics(ts)`,
@@ -61,11 +62,26 @@ func (s *Store) Insert(r Report) error {
 		return err
 	}
 	defer tx.Rollback()
+	var previousSystem []byte
+	var previousTS int64
+	_ = tx.QueryRow(`SELECT ts,system FROM reports WHERE node=? ORDER BY ts DESC LIMIT 1`, r.NodeID).Scan(&previousTS, &previousSystem)
+	if r.TS-previousTS >= 0 && r.TS-previousTS <= 600 {
+		var old System
+		if json.Unmarshal(previousSystem, &old) == nil {
+			r.System.NICRXDelta = max(0, r.System.NICRX-old.NICRX)
+			r.System.NICTXDelta = max(0, r.System.NICTX-old.NICTX)
+		}
+	}
 	sys, _ := json.Marshal(r.System)
 	if _, err = tx.Exec(`INSERT INTO reports VALUES(?,?,?,?)`, r.NodeID, r.TS, r.NodeName, sys); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return ErrDuplicate
 		}
+		return err
+	}
+	bucket := r.TS / 3600 * 3600
+	_, err = tx.Exec(`INSERT INTO host_hourly VALUES(?,?,?,?,?) ON CONFLICT(bucket,node) DO UPDATE SET n=n+1,rx=rx+excluded.rx,tx=tx+excluded.tx`, bucket, r.NodeID, 1, r.System.NICRXDelta, r.System.NICTXDelta)
+	if err != nil {
 		return err
 	}
 	for _, m := range r.Metrics {
@@ -94,7 +110,6 @@ func (s *Store) Insert(r Report) error {
 		} else if m.TCP != nil {
 			rtt = m.TCP.AvgMS
 		}
-		bucket := r.TS / 3600 * 3600
 		_, err = tx.Exec(`INSERT INTO hourly VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bucket,node,link) DO UPDATE SET n=n+1,rtt_sum=rtt_sum+excluded.rtt_sum,rtt_max=max(rtt_max,excluded.rtt_max),loss_max=max(loss_max,excluded.loss_max),bad_count=bad_count+excluded.bad_count,rx=rx+excluded.rx,tx=tx+excluded.tx`, bucket, r.NodeID, m.LinkID, 1, rtt, rtt, loss, bad, m.RXDelta, m.TXDelta)
 		if err != nil {
 			return err
@@ -225,6 +240,33 @@ type HourlyRow struct {
 	TX       int64   `json:"tx_bytes"`
 }
 
+type HostHourlyRow struct {
+	Bucket int64  `json:"bucket"`
+	Node   string `json:"node"`
+	Count  int    `json:"count"`
+	RX     int64  `json:"rx_bytes"`
+	TX     int64  `json:"tx_bytes"`
+}
+
+func (s *Store) HostHourly(days int) ([]HostHourlyRow, error) {
+	if days < 1 || days > 30 {
+		days = 30
+	}
+	rows, err := s.DB.Query(`SELECT bucket,node,n,rx,tx FROM host_hourly WHERE bucket>=? ORDER BY bucket DESC LIMIT 100000`, time.Now().Unix()-int64(days)*86400)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []HostHourlyRow{}
+	for rows.Next() {
+		var x HostHourlyRow
+		if rows.Scan(&x.Bucket, &x.Node, &x.Count, &x.RX, &x.TX) == nil {
+			out = append(out, x)
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Hourly(days int) ([]HourlyRow, error) {
 	if days < 1 || days > 30 {
 		days = 30
@@ -290,7 +332,14 @@ func (s *Store) Cleanup() error {
 	for _, q := range []struct {
 		SQL  string
 		Args []any
-	}{{`DELETE FROM reports WHERE ts<? AND ts<>(SELECT max(r2.ts) FROM reports r2 WHERE r2.node=reports.node)`, []any{now - 86400}}, {`DELETE FROM metrics WHERE ts<? OR (ts<? AND bad=0)`, []any{now - 30*86400, now - 86400}}, {`DELETE FROM hourly WHERE bucket<?`, []any{now - 30*86400}}, {`DELETE FROM mtr WHERE ts<?`, []any{now - 30*86400}}, {`DELETE FROM nonces WHERE ts<?`, []any{now - 300}}} {
+	}{
+		{`DELETE FROM reports WHERE ts<? AND ts<>(SELECT max(r2.ts) FROM reports r2 WHERE r2.node=reports.node)`, []any{now - 86400}},
+		{`DELETE FROM metrics WHERE ts<? OR (ts<? AND bad=0)`, []any{now - 30*86400, now - 86400}},
+		{`DELETE FROM hourly WHERE bucket<?`, []any{now - 30*86400}},
+		{`DELETE FROM host_hourly WHERE bucket<?`, []any{now - 30*86400}},
+		{`DELETE FROM mtr WHERE ts<?`, []any{now - 30*86400}},
+		{`DELETE FROM nonces WHERE ts<?`, []any{now - 300}},
+	} {
 		if _, err := s.DB.Exec(q.SQL, q.Args...); err != nil {
 			return err
 		}

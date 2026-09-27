@@ -23,6 +23,7 @@ type LiveNode = { id: string; name: string; ts: number; system: System };
 type LiveLink = { node: string; ts: number; metric: Metric; bad: boolean };
 type Snapshot = { nodes: LiveNode[]; links: LiveLink[]; storage_bytes: number; free_bytes: number };
 type Hourly = { bucket: number; node: string; link: string; count: number; avg_ms: number; max_ms: number; max_loss: number; bad_count: number; rx_bytes: number; tx_bytes: number };
+type HostHourly = { bucket: number; node: string; count: number; rx_bytes: number; tx_bytes: number };
 type EventRow = { node: string; ts: number; bad: boolean; metric: Metric };
 type MTR = { node: string; link: string; ts: number; mtr: { target: string; reason: string; hops: Array<{ count: number; host: string; 'Loss%': number; Avg: number; Wrst: number }> } };
 
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [hourly, setHourly] = useState<Hourly[]>([]);
+  const [hostHourly, setHostHourly] = useState<HostHourly[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [mtrs, setMtrs] = useState<MTR[]>([]);
   const [days, setDays] = useState('1');
@@ -49,11 +51,11 @@ export default function Dashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      const paths = ['/api/topology', '/api/snapshot', '/api/hourly?days=30', '/api/events', '/api/mtr'];
+      const paths = ['/api/topology', '/api/snapshot', '/api/hourly?days=30', '/api/host-hourly?days=30', '/api/events', '/api/mtr'];
       const responses = await Promise.all(paths.map((path) => fetch(path, { cache: 'no-store' })));
       if (responses.some((r) => !r.ok)) throw new Error('服务返回错误');
-      const [n, s, h, e, m] = await Promise.all(responses.map((r) => r.json()));
-      setNodes(n); setSnapshot(s); setHourly(h); setEvents(e); setMtrs(m); setError(''); setUpdated(Date.now());
+      const [n, s, h, hh, e, m] = await Promise.all(responses.map((r) => r.json()));
+      setNodes(n); setSnapshot(s); setHourly(h); setHostHourly(hh); setEvents(e); setMtrs(m); setError(''); setUpdated(Date.now());
     } catch (e) { setError(e instanceof Error ? e.message : '无法连接到监控中心'); }
   }, []);
   useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 30000); return () => clearInterval(timer); }, [refresh]);
@@ -83,7 +85,10 @@ export default function Dashboard() {
         </SimpleGrid>}
 
         <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
-          <Panel title="主机"><Stack gap="sm">{snapshot?.nodes.length ? snapshot.nodes.map((n) => <Card key={n.id} radius="md" p="md" bg="#162437"><Group justify="space-between"><Box><Text fw={650}>{n.name}</Text><Text size="xs" c="dimmed">{n.id} · {when(n.ts)}</Text></Box><Badge color={Date.now() / 1000 - n.ts <= 180 ? 'teal' : 'red'} variant="light">{Date.now() / 1000 - n.ts <= 180 ? '在线' : '离线'}</Badge></Group><Group gap="lg" mt="sm"><Text size="sm" c="dimmed">负载 <Text component="span" c="gray.1">{fmt(n.system.load_1m)}</Text></Text><Text size="sm" c="dimmed">内存 <Text component="span" c="gray.1">{fmt(n.system.memory_pct, '%')}</Text></Text><Text size="sm" c="dimmed">磁盘 <Text component="span" c="gray.1">{fmt(n.system.disk_pct, '%')}</Text></Text></Group></Card>) : <Text c="dimmed">尚无主机上报。</Text>}</Stack></Panel>
+          <Panel title="主机"><Stack gap="sm">{snapshot?.nodes.length ? snapshot.nodes.map((n) => {
+            const traffic = hostHourly.filter((h) => h.node === n.id && h.bucket >= Date.now() / 1000 - 86400).reduce((sum, h) => sum + h.rx_bytes + h.tx_bytes, 0);
+            return <Card key={n.id} radius="md" p="md" bg="#162437"><Group justify="space-between"><Box><Text fw={650}>{n.name}</Text><Text size="xs" c="dimmed">{n.id} · {when(n.ts)}</Text></Box><Badge color={Date.now() / 1000 - n.ts <= 180 ? 'teal' : 'red'} variant="light">{Date.now() / 1000 - n.ts <= 180 ? '在线' : '离线'}</Badge></Group><Group gap="lg" mt="sm"><Text size="sm" c="dimmed">负载 <Text component="span" c="gray.1">{fmt(n.system.load_1m)}</Text></Text><Text size="sm" c="dimmed">内存 <Text component="span" c="gray.1">{fmt(n.system.memory_pct, '%')}</Text></Text><Text size="sm" c="dimmed">磁盘 <Text component="span" c="gray.1">{fmt(n.system.disk_pct, '%')}</Text></Text><Text size="sm" c="dimmed">近 24 小时网卡 <Text component="span" c="gray.1">{bytes(traffic)}</Text></Text></Group></Card>;
+          }) : <Text c="dimmed">尚无主机上报。</Text>}</Stack></Panel>
           <Panel title="有向链路"><Stack gap="sm">{snapshot?.links.length ? snapshot.links.map((l) => <Card key={`${l.node}/${l.metric.link_id}`} radius="md" p="md" bg="#162437"><Group justify="space-between" align="start"><Box><Text fw={650}>{nodes.find((n) => n.id === l.node)?.name || l.node} → {l.metric.link_name}</Text><Text size="xs" c="dimmed">{l.metric.target} · {l.metric.address}</Text></Box><Badge color={status(l) === '正常' ? 'teal' : status(l) === '异常' ? 'orange' : 'red'} variant="light">{status(l)}</Badge></Group><Group gap="lg" mt="sm"><Text size="sm" c="dimmed">RTT <Text component="span" c="gray.1">{fmt(l.metric.ping?.avg_ms ?? l.metric.tcp?.avg_ms, ' ms')}</Text></Text><Text size="sm" c="dimmed">丢包 <Text component="span" c="gray.1">{fmt(l.metric.ping?.loss_pct, '%')}</Text></Text><Text size="sm" c="dimmed">Tailscale <Text component="span" c="gray.1">{l.metric.tailscale?.path || '—'}</Text></Text></Group></Card>) : <Text c="dimmed">尚无链路采样。</Text>}</Stack></Panel>
         </SimpleGrid>
 
