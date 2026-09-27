@@ -52,6 +52,7 @@ type Metric struct {
 	LinkName string `json:"link_name"`
 	Target   string `json:"target"`
 	Address  string `json:"address"`
+	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
 	Ping     *Ping  `json:"ping,omitempty"`
 	TCP      *TCP   `json:"tcp,omitempty"`
@@ -222,7 +223,7 @@ func RunMTR(address string, port int, reason string) *MTR {
 	return &MTR{Target: address, Reason: reason, Hops: result.Report.Hubs}
 }
 func ProbeLink(l Link) Metric {
-	m := Metric{LinkID: l.ID, LinkName: l.Name, Target: l.Target, Address: l.Address, Protocol: l.Protocol}
+	m := Metric{LinkID: l.ID, LinkName: l.Name, Target: l.Target, Address: l.Address, Port: l.Port, Protocol: l.Protocol}
 	if l.Protocol == "icmp" || l.Protocol == "both" {
 		m.Ping = PingHost(l.Address)
 	}

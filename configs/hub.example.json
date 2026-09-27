@@ -2,6 +2,8 @@
   "mode": "hub",
   "id": "hub-1",
   "name": "Main monitoring server",
+  "public_ip": "203.0.113.1",
+  "tailscale_ip": "100.64.0.1",
   "listen_web": "0.0.0.0:8443",
   "listen_ingest": "100.64.0.1:8789",
   "tls_cert": "${CREDENTIALS_DIRECTORY}/tls-cert",
@@ -12,6 +14,8 @@
     {
       "id": "edge-1",
       "name": "Remote edge",
+      "public_ip": "203.0.113.2",
+      "tailscale_ip": "100.64.0.2",
       "source_ip": "100.64.0.2",
       "key": "REPLACE_WITH_OUTPUT_OF_gen-key"
     }

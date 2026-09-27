@@ -2,6 +2,8 @@
   "mode": "agent",
   "id": "edge-1",
   "name": "Remote edge",
+  "public_ip": "203.0.113.2",
+  "tailscale_ip": "100.64.0.2",
   "hub_url": "http://100.64.0.1:8789/report",
   "agent_key": "REPLACE_WITH_SAME_KEY_AS_HUB_NODE",
   "links": [

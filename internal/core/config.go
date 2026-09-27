@@ -14,6 +14,8 @@ import (
 type Node struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	PublicIP string `json:"public_ip,omitempty"`
+	TailIP   string `json:"tailscale_ip,omitempty"`
 	SourceIP string `json:"source_ip,omitempty"`
 	Key      string `json:"key,omitempty"`
 }
@@ -33,6 +35,8 @@ type Config struct {
 	Mode              string   `json:"mode"` // hub or agent
 	ID                string   `json:"id"`
 	Name              string   `json:"name"`
+	PublicIP          string   `json:"public_ip,omitempty"`
+	TailIP            string   `json:"tailscale_ip,omitempty"`
 	HubURL            string   `json:"hub_url,omitempty"`
 	ListenWeb         string   `json:"listen_web,omitempty"`
 	ListenIngest      string   `json:"listen_ingest,omitempty"`
@@ -64,6 +68,9 @@ func Load(path string) (Config, error) {
 	c.StoragePath = os.ExpandEnv(c.StoragePath)
 	if c.ID == "" || c.Name == "" {
 		return c, errors.New("id and name are required")
+	}
+	if c.PublicIP != "" && net.ParseIP(c.PublicIP) == nil || c.TailIP != "" && !inTailnet(net.ParseIP(c.TailIP)) {
+		return c, errors.New("invalid public_ip or tailscale_ip")
 	}
 	if c.IntervalSeconds == 0 {
 		c.IntervalSeconds = 60
@@ -110,6 +117,9 @@ func Load(path string) (Config, error) {
 		for _, n := range c.Nodes {
 			if n.ID == "" || ids[n.ID] || n.Name == "" || len(n.Key) < 48 {
 				return c, fmt.Errorf("invalid agent %q", n.ID)
+			}
+			if n.PublicIP != "" && net.ParseIP(n.PublicIP) == nil || n.TailIP != "" && !inTailnet(net.ParseIP(n.TailIP)) {
+				return c, fmt.Errorf("invalid IP on agent %q", n.ID)
 			}
 			ids[n.ID] = true
 		}

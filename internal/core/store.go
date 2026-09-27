@@ -41,6 +41,7 @@ func OpenStore(path string, maxMB, minFreeMB int64) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS host_hourly(bucket INTEGER NOT NULL,node TEXT NOT NULL,n INTEGER NOT NULL,rx INTEGER NOT NULL,tx INTEGER NOT NULL,PRIMARY KEY(bucket,node))`,
 		`CREATE TABLE IF NOT EXISTS mtr(node TEXT NOT NULL,link TEXT NOT NULL,ts INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(node,link,ts))`,
 		`CREATE TABLE IF NOT EXISTS nonces(node TEXT NOT NULL,nonce TEXT NOT NULL,ts INTEGER NOT NULL,PRIMARY KEY(node,nonce))`,
+		`CREATE TABLE IF NOT EXISTS node_metadata(id TEXT PRIMARY KEY,name TEXT NOT NULL,note TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS metrics_time ON metrics(ts)`,
 	}
 	for _, q := range statements {
@@ -52,6 +53,25 @@ func OpenStore(path string, maxMB, minFreeMB int64) (*Store, error) {
 	return &Store{DB: db, Path: path, MaxMB: maxMB, MinFreeMB: minFreeMB}, nil
 }
 func (s *Store) Close() error { return s.DB.Close() }
+
+type NodeMetadata struct {
+	Name string `json:"name"`
+	Note string `json:"note"`
+}
+
+func (s *Store) NodeMetadata(id string) (NodeMetadata, error) {
+	var m NodeMetadata
+	err := s.DB.QueryRow(`SELECT name,note FROM node_metadata WHERE id=?`, id).Scan(&m.Name, &m.Note)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NodeMetadata{}, nil
+	}
+	return m, err
+}
+
+func (s *Store) SetNodeMetadata(id string, m NodeMetadata) error {
+	_, err := s.DB.Exec(`INSERT INTO node_metadata(id,name,note) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,note=excluded.note`, id, m.Name, m.Note)
+	return err
+}
 func (s *Store) UseNonce(node, nonce string, ts int64) error {
 	_, err := s.DB.Exec(`INSERT INTO nonces VALUES(?,?,?)`, node, nonce, ts)
 	return err

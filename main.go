@@ -45,8 +45,16 @@ type app struct {
 	csp        string
 }
 
-const appVersion = "0.2.3"
-const frontendVersion = "0.2.3"
+const appVersion = "0.3.0"
+const frontendVersion = "0.3.0"
+
+type topologyNode struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Note     string `json:"note"`
+	PublicIP string `json:"public_ip,omitempty"`
+	TailIP   string `json:"tailscale_ip,omitempty"`
+}
 
 // Set by CI using -ldflags; local builds are deliberately identifiable.
 var buildVersion = "dev"
@@ -449,12 +457,64 @@ func (a *app) serveWeb() {
 		jsonResponse(w, map[string]string{"hub": appVersion, "frontend": frontendVersion, "build": buildVersion})
 	})
 	mux.HandleFunc("GET /api/topology", func(w http.ResponseWriter, r *http.Request) {
-		nodes := []core.Node{{ID: a.cfg.ID, Name: a.cfg.Name}}
+		nodes := []topologyNode{}
+		add := func(n core.Node) error {
+			m, err := a.store.NodeMetadata(n.ID)
+			if err != nil {
+				return err
+			}
+			name := n.Name
+			if m.Name != "" {
+				name = m.Name
+			}
+			nodes = append(nodes, topologyNode{ID: n.ID, Name: name, Note: m.Note, PublicIP: n.PublicIP, TailIP: n.TailIP})
+			return nil
+		}
+		if err := add(core.Node{ID: a.cfg.ID, Name: a.cfg.Name, PublicIP: a.cfg.PublicIP, TailIP: a.cfg.TailIP}); err != nil {
+			http.Error(w, "query error", 500)
+			return
+		}
 		for _, n := range a.cfg.Nodes {
-			nodes = append(nodes, core.Node{ID: n.ID, Name: n.Name})
+			if err := add(n); err != nil {
+				http.Error(w, "query error", 500)
+				return
+			}
 		}
 		jsonResponse(w, nodes)
 	})
+	mux.HandleFunc("PUT /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "invalid origin", 403)
+			return
+		}
+		id := r.PathValue("id")
+		known := id == a.cfg.ID
+		for _, n := range a.cfg.Nodes {
+			if n.ID == id {
+				known = true
+			}
+		}
+		if !known {
+			http.NotFound(w, r)
+			return
+		}
+		var m core.NodeMetadata
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&m); err != nil {
+			http.Error(w, "invalid JSON", 400)
+			return
+		}
+		m.Name, m.Note = strings.TrimSpace(m.Name), strings.TrimSpace(m.Note)
+		if len([]rune(m.Name)) < 1 || len([]rune(m.Name)) > 60 || len([]rune(m.Note)) > 240 {
+			http.Error(w, "invalid name or note", 400)
+			return
+		}
+		if err := a.store.SetNodeMetadata(id, m); err != nil {
+			http.Error(w, "save failed", 500)
+			return
+		}
+		jsonResponse(w, m)
+	})
+	mux.HandleFunc("GET /api/ip-info", ipInfoHandler)
 	mux.HandleFunc("GET /api/snapshot", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, a.store.Snapshot()) })
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
 		h, _ := strconv.Atoi(r.URL.Query().Get("hours"))
