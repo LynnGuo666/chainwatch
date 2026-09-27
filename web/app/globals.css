@@ -1,0 +1,6 @@
+:root { color-scheme: dark; }
+body { margin: 0; background: #080e17; }
+main { min-height: 100vh; }
+.hero { background: radial-gradient(circle at 80% 0%, #153149 0, transparent 38%), linear-gradient(180deg, #101b2b, #080e17 70%); }
+.metric-value { font-variant-numeric: tabular-nums; letter-spacing: -.035em; }
+.chart-wrap { min-height: 270px; }
