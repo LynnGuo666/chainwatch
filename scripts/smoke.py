@@ -2,6 +2,8 @@
 """Exercise a hub and agent using temporary keys, TLS, and localhost ports."""
 
 import argparse
+import base64
+import hashlib
 import json
 import pathlib
 import re
@@ -63,6 +65,11 @@ def main():
                     raise AssertionError("unauthenticated API request succeeded")
                 except urllib.error.HTTPError as error:
                     assert error.code == 401
+                login_page = urllib.request.urlopen(base + "/login", context=context, timeout=2)
+                login_html = login_page.read().decode()
+                policy = login_page.headers["Content-Security-Policy"]
+                scripts = [body for attrs, body in re.findall(r"<script\b([^>]*)>(.*?)</script>", login_html, re.S) if "src=" not in attrs and body]
+                assert scripts and all("'sha256-" + base64.b64encode(hashlib.sha256(script.encode()).digest()).decode() + "'" in policy for script in scripts)
                 login = urllib.request.Request(
                     base + "/api/login",
                     data=json.dumps({"username": "tester", "password": password}).encode(),
@@ -83,7 +90,7 @@ def main():
                         pass
                     time.sleep(0.5)
                 assert snapshot and len(snapshot["nodes"]) == 2 and len(snapshot["links"]) == 2, snapshot
-                assert all(node["system"]["version"] == "0.2.0" for node in snapshot["nodes"]), snapshot
+                assert all(node["system"]["version"] == "0.2.1" for node in snapshot["nodes"]), snapshot
                 request = urllib.request.Request(base + "/", headers={"Cookie": cookie})
                 html = urllib.request.urlopen(request, context=context, timeout=2).read().decode()
                 assert "Chainwatch" in html
@@ -97,7 +104,7 @@ def main():
                     assert response.status == 200
                     if path == "/api/version":
                         versions = json.load(response)
-                        assert versions["hub"] == "0.2.0" and versions["frontend"] == "0.2.0"
+                        assert versions["hub"] == "0.2.1" and versions["frontend"] == "0.2.1"
                 print("smoke OK: HTTPS login, two reports, two links, diagnosis, versions, embedded Next.js assets")
             finally:
                 agent_proc.terminate()

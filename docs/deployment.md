@@ -11,7 +11,7 @@ cd .. && go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpa
 
 `web/out` is embedded in the binary. The server needs no Node.js runtime. GitHub Actions runs the same steps and uploads the Linux binary.
 
-Build `v0.2.0` hub and agents from the same commit. The hub rejects reports from legacy agents with HTTP 426, so update the agent immediately after the hub. Actions injects the commit SHA into the Go binary and frontend build.
+Build hub and agents from the same release commit (`v0.2.1` or newer). The hub rejects reports from agents on a different version with HTTP 426; update the agent before the hub when upgrading from `v0.1.0`. Actions injects the commit SHA into the Go binary and frontend build.
 
 ## Configure
 

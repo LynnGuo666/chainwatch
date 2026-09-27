@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -105,5 +106,15 @@ func TestDashboardSessionLogin(t *testing.T) {
 	handler.ServeHTTP(w, check)
 	if w.Code != 401 {
 		t.Fatalf("unauthenticated API: %d", w.Code)
+	}
+}
+
+func TestCSPAllowsOnlyEmbeddedInlineScripts(t *testing.T) {
+	body := []byte(`<script src="/_next/static/app.js"></script><script>window.ready=true</script>`)
+	policy := contentSecurityPolicy(body)
+	digest := sha256.Sum256([]byte("window.ready=true"))
+	hash := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
+	if !strings.Contains(policy, hash) || strings.Contains(policy, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("CSP does not hash inline startup script: %s", policy)
 	}
 }

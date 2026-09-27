@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,10 +42,11 @@ type app struct {
 	rateMu     sync.Mutex
 	sessions   map[string]time.Time
 	sessionMu  sync.Mutex
+	csp        string
 }
 
-const appVersion = "0.2.0"
-const frontendVersion = "0.2.0"
+const appVersion = "0.2.1"
+const frontendVersion = "0.2.1"
 
 // Set by CI using -ldflags; local builds are deliberately identifiable.
 var buildVersion = "dev"
@@ -380,7 +382,7 @@ func (a *app) auth(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'")
+		w.Header().Set("Content-Security-Policy", a.csp)
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/api/login" || r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/_next/") {
 			next.ServeHTTP(w, r)
@@ -397,6 +399,27 @@ func (a *app) auth(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+var inlineScript = regexp.MustCompile(`(?s)<script\b([^>]*)>(.*?)</script>`)
+
+func contentSecurityPolicy(pages ...[]byte) string {
+	policy := "default-src 'self'; script-src 'self'"
+	seen := map[string]bool{}
+	for _, page := range pages {
+		for _, match := range inlineScript.FindAllSubmatch(page, -1) {
+			if strings.Contains(string(match[1]), "src=") || len(match[2]) == 0 {
+				continue
+			}
+			digest := sha256.Sum256(match[2])
+			hash := base64.StdEncoding.EncodeToString(digest[:])
+			if !seen[hash] {
+				policy += " 'sha256-" + hash + "'"
+				seen[hash] = true
+			}
+		}
+	}
+	return policy + "; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+}
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
@@ -406,17 +429,21 @@ func (a *app) serveWeb() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	indexHTML, err := fs.ReadFile(sub, "index.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	loginHTML, err := fs.ReadFile(sub, "login.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	a.csp = contentSecurityPolicy(indexHTML, loginHTML)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", a.login)
 	mux.HandleFunc("POST /api/logout", a.logout)
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
-		body, err := fs.ReadFile(sub, "login.html")
-		if err != nil {
-			http.Error(w, "login unavailable", 500)
-			return
-		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(body)
+		_, _ = w.Write(loginHTML)
 	})
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"hub": appVersion, "frontend": frontendVersion, "build": buildVersion})
