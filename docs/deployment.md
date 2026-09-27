@@ -1,3 +1,28 @@
 # Deployment
 
-Implementation and verified deployment steps will be added after the hub, agent, and dashboard are built.
+## Build
+
+Requires Go 1.27, Node.js 24 and npm. The release build runs:
+
+```sh
+cd web && npm ci && npm run build
+cd .. && go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/chainwatch .
+```
+
+`web/out` is embedded in the binary. The server needs no Node.js runtime. GitHub Actions runs the same steps and uploads the Linux binary.
+
+## Configure
+
+Copy [hub.example.json](../configs/hub.example.json) and [agent.example.json](../configs/agent.example.json) to private files outside the repository. Replace every sample IP, ID, service, certificate and secret. Run `chainwatch gen-key` once per agent and put that value on the agent and in the hub's matching `nodes[].key`. Run `chainwatch hash-password` and enter a long password on stdin; put its hash in `web_password_hash`.
+
+Give configuration files mode `0600`. Add each agent as a separate node with its own key and optional exact `source_ip`. Keep the report listener on a private Tailscale address. HTTP reporting is rejected unless the hub address is Tailscale/loopback; use HTTPS for other private networks. The public dashboard listener needs an IP- or domain-valid TLS certificate.
+
+Only attach `tailscale_peer` to one link for each source/peer pair, to avoid double counting that peer's traffic in summaries. Interface byte counters represent the host's NIC traffic; Tailscale peer counters represent tunnel traffic and do not equal provider billing.
+
+Start the hub with `chainwatch --config /etc/chainwatch/hub.json` and each agent with `chainwatch --config /etc/chainwatch/agent.json`. The binaries need `ping`, `mtr`, and `tailscale` available for those metrics. A TCP-only link can run without ping. Agent probes only the statically configured addresses; the hub has no remote execution endpoint.
+
+## HTTPS and access
+
+Do not put the dashboard on a public port before setting a strong password and TLS. IP certificates with short lifetimes must be renewed by their issuer and the hub restarted after renewal. Limit access upstream if possible. Software rate limiting does not prevent a bandwidth-saturating DDoS attack.
+
+For systemd, load private config and TLS files with `LoadCredential`, run as a dedicated non-root user, set `StateDirectory=chainwatch`, and restart the hub after certificate renewal. Example units are in [`deploy/systemd`](../deploy/systemd).

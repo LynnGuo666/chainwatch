@@ -1,0 +1,28 @@
+{
+  "mode": "hub",
+  "id": "hub-1",
+  "name": "Main monitoring server",
+  "listen_web": "0.0.0.0:8443",
+  "listen_ingest": "100.64.0.1:8789",
+  "tls_cert": "${CREDENTIALS_DIRECTORY}/tls-cert",
+  "tls_key": "${CREDENTIALS_DIRECTORY}/tls-key",
+  "web_user": "admin",
+  "web_password_hash": "REPLACE_WITH_OUTPUT_OF_hash-password",
+  "nodes": [
+    {
+      "id": "edge-1",
+      "name": "Remote edge",
+      "source_ip": "100.64.0.2",
+      "key": "REPLACE_WITH_OUTPUT_OF_gen-key"
+    }
+  ],
+  "links": [
+    {"id": "local-service", "name": "Local proxy inbound", "target": "Local proxy", "address": "127.0.0.1", "port": 443, "protocol": "tcp", "mtr": false},
+    {"id": "edge-tailnet", "name": "Remote edge over Tailscale", "target": "edge-1", "address": "100.64.0.2", "port": 443, "protocol": "both", "tailscale_peer": "100.64.0.2", "mtr": false},
+    {"id": "edge-public", "name": "Remote edge public baseline", "target": "edge-1", "address": "203.0.113.2", "port": 443, "protocol": "both", "mtr": true}
+  ],
+  "interval_seconds": 60,
+  "storage_path": "${STATE_DIRECTORY}/chainwatch.sqlite3",
+  "storage_max_mb": 128,
+  "min_free_mb": 1024
+}

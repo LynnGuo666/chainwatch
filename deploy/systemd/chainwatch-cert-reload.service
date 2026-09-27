@@ -1,0 +1,6 @@
+[Unit]
+Description=Reload Chainwatch after short-lived certificate renewal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart chainwatch-hub.service
