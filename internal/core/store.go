@@ -21,6 +21,7 @@ type Store struct {
 	Path      string
 	MaxMB     int64
 	MinFreeMB int64
+	HubID     string
 }
 
 func OpenStore(path string, maxMB, minFreeMB int64) (*Store, error) {
@@ -42,6 +43,9 @@ func OpenStore(path string, maxMB, minFreeMB int64) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS mtr(node TEXT NOT NULL,link TEXT NOT NULL,ts INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(node,link,ts))`,
 		`CREATE TABLE IF NOT EXISTS nonces(node TEXT NOT NULL,nonce TEXT NOT NULL,ts INTEGER NOT NULL,PRIMARY KEY(node,nonce))`,
 		`CREATE TABLE IF NOT EXISTS node_metadata(id TEXT PRIMARY KEY,name TEXT NOT NULL,note TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS traffic_tracking(id TEXT PRIMARY KEY,started_at INTEGER NOT NULL,baselined INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS traffic_plan(id TEXT PRIMARY KEY,quota_gb INTEGER NOT NULL DEFAULT 0,reset_day INTEGER NOT NULL DEFAULT 1,billing_mode TEXT NOT NULL DEFAULT 'sum',calibration_offset INTEGER NOT NULL DEFAULT 0,calibration_cycle INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS traffic_hourly(bucket INTEGER NOT NULL,node TEXT NOT NULL,rx INTEGER NOT NULL,tx INTEGER NOT NULL,estimated_monitor INTEGER NOT NULL,PRIMARY KEY(bucket,node))`,
 		`CREATE INDEX IF NOT EXISTS metrics_time ON metrics(ts)`,
 	}
 	for _, q := range statements {
@@ -53,6 +57,14 @@ func OpenStore(path string, maxMB, minFreeMB int64) (*Store, error) {
 	return &Store{DB: db, Path: path, MaxMB: maxMB, MinFreeMB: minFreeMB}, nil
 }
 func (s *Store) Close() error { return s.DB.Close() }
+
+func (s *Store) InitTraffic(id string, now time.Time) error {
+	if _, err := s.DB.Exec(`INSERT OR IGNORE INTO traffic_tracking(id,started_at) VALUES(?,?)`, id, now.Unix()); err != nil {
+		return err
+	}
+	_, err := s.DB.Exec(`INSERT OR IGNORE INTO traffic_plan(id) VALUES(?)`, id)
+	return err
+}
 
 type NodeMetadata struct {
 	Name string `json:"name"`
@@ -97,6 +109,34 @@ func (s *Store) Insert(r Report) error {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return ErrDuplicate
 		}
+		return err
+	}
+	var baselined int
+	var trackingStart int64
+	if err = tx.QueryRow(`SELECT started_at,baselined FROM traffic_tracking WHERE id=?`, r.NodeID).Scan(&trackingStart, &baselined); err == nil && r.TS >= trackingStart {
+		rx, txBytes := r.System.NICRXDelta, r.System.NICTXDelta
+		if baselined == 0 {
+			rx, txBytes = 0, 0
+			if _, err = tx.Exec(`UPDATE traffic_tracking SET baselined=1 WHERE id=?`, r.NodeID); err != nil {
+				return err
+			}
+		}
+		estimate := EstimatedProbeBytes(r)
+		if s.HubID != "" && r.NodeID != s.HubID {
+			body, _ := json.Marshal(r)
+			estimate += int64(len(body) + 600)
+		}
+		if _, err = tx.Exec(`INSERT INTO traffic_hourly(bucket,node,rx,tx,estimated_monitor) VALUES(?,?,?,?,?) ON CONFLICT(bucket,node) DO UPDATE SET rx=rx+excluded.rx,tx=tx+excluded.tx,estimated_monitor=estimated_monitor+excluded.estimated_monitor`, r.TS/3600*3600, r.NodeID, rx, txBytes, estimate); err != nil {
+			return err
+		}
+		if s.HubID != "" && r.NodeID != s.HubID {
+			body, _ := json.Marshal(r)
+			reportEstimate := int64(len(body) + 600)
+			if _, err = tx.Exec(`INSERT INTO traffic_hourly(bucket,node,rx,tx,estimated_monitor) VALUES(?,?,?,?,?) ON CONFLICT(bucket,node) DO UPDATE SET estimated_monitor=estimated_monitor+excluded.estimated_monitor`, r.TS/3600*3600, s.HubID, 0, 0, reportEstimate); err != nil {
+				return err
+			}
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	bucket := r.TS / 3600 * 3600
@@ -359,6 +399,7 @@ func (s *Store) Cleanup() error {
 		{`DELETE FROM metrics WHERE ts<? OR (ts<? AND bad=0)`, []any{now - 30*86400, now - 86400}},
 		{`DELETE FROM hourly WHERE bucket<?`, []any{now - 30*86400}},
 		{`DELETE FROM host_hourly WHERE bucket<?`, []any{now - 30*86400}},
+		{`DELETE FROM traffic_hourly WHERE bucket<?`, []any{now - 75*86400}},
 		{`DELETE FROM mtr WHERE ts<?`, []any{now - 30*86400}},
 		{`DELETE FROM nonces WHERE ts<?`, []any{now - 300}},
 	} {

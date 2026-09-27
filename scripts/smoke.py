@@ -98,6 +98,29 @@ def main():
                     raise AssertionError("cross-origin edit succeeded")
                 except urllib.error.HTTPError as error:
                     assert error.code == 403
+                traffic_request = urllib.request.Request(base + "/api/traffic", headers={"Cookie": cookie})
+                traffic = json.load(urllib.request.urlopen(traffic_request, context=context, timeout=2))
+                assert len(traffic) == 2 and all(x["quota_gb"] == 0 and x["partial"] for x in traffic)
+                plan_request = urllib.request.Request(
+                    base + "/api/traffic-plan/edge", data=json.dumps({"quota_gb": 2000, "reset_day": 1, "billing_mode": "sum"}).encode(),
+                    headers={"Cookie": cookie, "Origin": base, "Content-Type": "application/json"}, method="PUT",
+                )
+                assert json.load(urllib.request.urlopen(plan_request, context=context, timeout=2))["quota_gb"] == 2000
+                calibrate_request = urllib.request.Request(
+                    base + "/api/traffic-calibration/edge", data=json.dumps({"used_gb": 123.45}).encode(),
+                    headers={"Cookie": cookie, "Origin": base, "Content-Type": "application/json"}, method="POST",
+                )
+                calibrated = json.load(urllib.request.urlopen(calibrate_request, context=context, timeout=2))
+                assert calibrated["calibrated"] and calibrated["used_bytes"] == 123_450_000_000
+                forbidden_plan = urllib.request.Request(
+                    base + "/api/traffic-plan/edge", data=b'{}',
+                    headers={"Cookie": cookie, "Origin": "https://evil.example"}, method="PUT",
+                )
+                try:
+                    urllib.request.urlopen(forbidden_plan, context=context, timeout=2)
+                    raise AssertionError("cross-origin traffic plan edit succeeded")
+                except urllib.error.HTTPError as error:
+                    assert error.code == 403
                 snapshot = None
                 for _ in range(30):
                     try:
@@ -109,7 +132,7 @@ def main():
                         pass
                     time.sleep(0.5)
                 assert snapshot and len(snapshot["nodes"]) == 2 and len(snapshot["links"]) == 2, snapshot
-                assert all(node["system"]["version"] == "0.4.0" for node in snapshot["nodes"]), snapshot
+                assert all(node["system"]["version"] == "0.5.0" for node in snapshot["nodes"]), snapshot
                 request = urllib.request.Request(base + "/", headers={"Cookie": cookie})
                 html = urllib.request.urlopen(request, context=context, timeout=2).read().decode()
                 assert "Chainwatch" in html
@@ -123,7 +146,7 @@ def main():
                     assert response.status == 200
                     if path == "/api/version":
                         versions = json.load(response)
-                        assert versions["hub"] == "0.4.0" and versions["frontend"] == "0.4.0"
+                        assert versions["hub"] == "0.5.0" and versions["frontend"] == "0.5.0"
                 print("smoke OK: HTTPS login, two reports, two links, diagnosis, versions, embedded Next.js assets")
             finally:
                 agent_proc.terminate()

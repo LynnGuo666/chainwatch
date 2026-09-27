@@ -45,8 +45,8 @@ type app struct {
 	csp        string
 }
 
-const appVersion = "0.4.0"
-const frontendVersion = "0.4.0"
+const appVersion = "0.5.0"
+const frontendVersion = "0.5.0"
 
 type topologyNode struct {
 	ID       string `json:"id"`
@@ -56,8 +56,28 @@ type topologyNode struct {
 	TailIP   string `json:"tailscale_ip,omitempty"`
 }
 
+func (a *app) knownNode(id string) bool {
+	if id == a.cfg.ID {
+		return true
+	}
+	for _, n := range a.cfg.Nodes {
+		if n.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Set by CI using -ldflags; local builds are deliberately identifiable.
 var buildVersion = "dev"
+
+func nodeIDs(nodes []core.Node) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	return ids
+}
 
 func main() {
 	syscall.Umask(0077)
@@ -99,6 +119,12 @@ func main() {
 			log.Fatal(err)
 		}
 		defer a.store.Close()
+		a.store.HubID = cfg.ID
+		for _, id := range append([]string{cfg.ID}, nodeIDs(cfg.Nodes)...) {
+			if err := a.store.InitTraffic(id, time.Now()); err != nil {
+				log.Fatal(err)
+			}
+		}
 		go a.collectLoop()
 		go a.cleanupLoop()
 		go a.serveIngest()
@@ -488,13 +514,7 @@ func (a *app) serveWeb() {
 			return
 		}
 		id := r.PathValue("id")
-		known := id == a.cfg.ID
-		for _, n := range a.cfg.Nodes {
-			if n.ID == id {
-				known = true
-			}
-		}
-		if !known {
+		if !a.knownNode(id) {
 			http.NotFound(w, r)
 			return
 		}
@@ -513,6 +533,72 @@ func (a *app) serveWeb() {
 			return
 		}
 		jsonResponse(w, m)
+	})
+	mux.HandleFunc("GET /api/traffic", func(w http.ResponseWriter, r *http.Request) {
+		out := make([]core.TrafficStatus, 0, len(a.cfg.Nodes)+1)
+		for _, id := range append([]string{a.cfg.ID}, nodeIDs(a.cfg.Nodes)...) {
+			status, err := a.store.TrafficStatus(id, time.Now())
+			if err != nil {
+				http.Error(w, "query error", 500)
+				return
+			}
+			out = append(out, status)
+		}
+		jsonResponse(w, out)
+	})
+	mux.HandleFunc("PUT /api/traffic-plan/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "invalid origin", 403)
+			return
+		}
+		id := r.PathValue("id")
+		if !a.knownNode(id) {
+			http.NotFound(w, r)
+			return
+		}
+		var p core.TrafficPlan
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&p); err != nil {
+			http.Error(w, "invalid JSON", 400)
+			return
+		}
+		if err := a.store.SetTrafficPlan(id, p); err != nil {
+			http.Error(w, "invalid traffic plan", 400)
+			return
+		}
+		status, err := a.store.TrafficStatus(id, time.Now())
+		if err != nil {
+			http.Error(w, "query error", 500)
+			return
+		}
+		jsonResponse(w, status)
+	})
+	mux.HandleFunc("POST /api/traffic-calibration/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "invalid origin", 403)
+			return
+		}
+		id := r.PathValue("id")
+		if !a.knownNode(id) {
+			http.NotFound(w, r)
+			return
+		}
+		var input struct {
+			UsedGB float64 `json:"used_gb"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&input); err != nil {
+			http.Error(w, "invalid JSON", 400)
+			return
+		}
+		if err := a.store.CalibrateTraffic(id, input.UsedGB, time.Now()); err != nil {
+			http.Error(w, "invalid calibration", 400)
+			return
+		}
+		status, err := a.store.TrafficStatus(id, time.Now())
+		if err != nil {
+			http.Error(w, "query error", 500)
+			return
+		}
+		jsonResponse(w, status)
 	})
 	mux.HandleFunc("GET /api/ip-info", ipInfoHandler)
 	mux.HandleFunc("GET /api/snapshot", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, a.store.Snapshot()) })
