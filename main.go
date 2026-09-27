@@ -45,8 +45,8 @@ type app struct {
 	csp        string
 }
 
-const appVersion = "0.3.1"
-const frontendVersion = "0.3.1"
+const appVersion = "0.4.0"
+const frontendVersion = "0.4.0"
 
 type topologyNode struct {
 	ID       string `json:"id"`
