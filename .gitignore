@@ -1,0 +1,10 @@
+/bin/
+/web/node_modules/
+/web/.next/
+/web/out/
+*.sqlite3*
+*.db
+*.log
+.DS_Store
+config.json
+secrets/
