@@ -318,8 +318,10 @@ func (s *Store) MTR(limit int) ([]MTRRow, error) {
 }
 func (s *Store) Disk() (int64, int64) {
 	var size, free int64
-	if st, e := os.Stat(s.Path); e == nil {
-		size = st.Size()
+	for _, path := range []string{s.Path, s.Path + "-wal", s.Path + "-shm"} {
+		if st, e := os.Stat(path); e == nil {
+			size += st.Size()
+		}
 	}
 	var st syscall.Statfs_t
 	if syscall.Statfs(filepath.Dir(s.Path), &st) == nil {

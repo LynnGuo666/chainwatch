@@ -19,7 +19,7 @@
   "links": [
     {"id": "local-service", "name": "Local proxy inbound", "target": "Local proxy", "address": "127.0.0.1", "port": 443, "protocol": "tcp", "mtr": false},
     {"id": "edge-tailnet", "name": "Remote edge over Tailscale", "target": "edge-1", "address": "100.64.0.2", "port": 443, "protocol": "both", "tailscale_peer": "100.64.0.2", "mtr": false},
-    {"id": "edge-public", "name": "Remote edge public baseline", "target": "edge-1", "address": "203.0.113.2", "port": 443, "protocol": "both", "mtr": true}
+    {"id": "edge-public", "name": "Remote edge public baseline", "target": "edge-1", "address": "203.0.113.2", "port": 443, "protocol": "tcp", "mtr": true}
   ],
   "interval_seconds": 60,
   "storage_path": "${STATE_DIRECTORY}/chainwatch.sqlite3",

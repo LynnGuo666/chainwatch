@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/LynnGuo666/chainwatch/internal/core"
@@ -40,6 +41,7 @@ type app struct {
 }
 
 func main() {
+	syscall.Umask(0077)
 	if len(os.Args) > 1 && os.Args[1] == "gen-key" {
 		b := make([]byte, 48)
 		if _, err := rand.Read(b); err != nil {

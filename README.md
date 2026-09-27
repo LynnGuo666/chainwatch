@@ -13,11 +13,18 @@ Lightweight distributed network monitoring. A Go hub collects signed reports fro
 
 Next.js uses `output: 'export'`; `next build` writes `web/out`, which is embedded into the Go binary. Next.js does not run on the server. API routes and server actions are intentionally implemented in Go.
 
-## Repository roadmap
+## What it measures
 
-1. Topology and security contract.
-2. Go hub and agent, probes, signed reports, bounded SQLite storage.
-3. Next.js dashboard with Mantine components and Recharts charts.
-4. GitHub Actions build, tests, and Linux artifact.
+- Directed ICMP and TCP probes, latency, jitter, loss, and reachability.
+- Tailscale direct/DERP path and per-peer received/sent byte counters.
+- Configured host network-interface traffic, load, memory, and disk.
+- Low-frequency baseline MTR and anomaly-triggered MTR with a cooldown.
+- Normal minute samples for 24 hours; hourly summaries and anomaly details for 30 days, with a bounded SQLite database.
 
-See [architecture](docs/architecture.md) for the data model and [deployment](docs/deployment.md) for installation once implemented.
+The dashboard uses [Mantine](https://mantine.dev/) components and [Recharts](https://recharts.github.io/) charts. Go serves the exported files and all read-only APIs on one HTTPS port. The report listener binds a private IP and accepts only signed reports from registered agents.
+
+## Build and deploy
+
+The [GitHub Actions workflow](.github/workflows/build.yml) builds and tests on every push and pull request, then uploads Linux amd64 and arm64 binaries. A `v*` tag also publishes release assets. Build locally with `npm ci --prefix web && npm run build --prefix web && go test ./... && go build -o bin/chainwatch .`.
+
+See [architecture](docs/architecture.md) for the data model and [deployment](docs/deployment.md) for private configuration, keys, TLS, and systemd units. Example configurations use reserved documentation IP addresses; keep real keys and deployment configuration out of Git.

@@ -31,6 +31,9 @@ func TestStoreReportAndCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := s.Snapshot()
+	if snap.StorageBytes <= 4096 {
+		t.Fatalf("storage accounting omitted SQLite WAL: %d", snap.StorageBytes)
+	}
 	if len(snap.Nodes) != 1 || len(snap.Links) != 1 || !snap.Links[0].Bad {
 		t.Fatalf("snapshot: %#v", snap)
 	}

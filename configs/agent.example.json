@@ -6,7 +6,7 @@
   "agent_key": "REPLACE_WITH_SAME_KEY_AS_HUB_NODE",
   "links": [
     {"id": "hub-tailnet", "name": "Hub over Tailscale", "target": "hub-1", "address": "100.64.0.1", "port": 443, "protocol": "both", "tailscale_peer": "100.64.0.1", "mtr": false},
-    {"id": "hub-public", "name": "Hub public baseline", "target": "hub-1", "address": "203.0.113.1", "port": 443, "protocol": "both", "mtr": true}
+    {"id": "hub-public", "name": "Hub public baseline", "target": "hub-1", "address": "203.0.113.1", "port": 443, "protocol": "tcp", "mtr": true}
   ],
   "interval_seconds": 60
 }
