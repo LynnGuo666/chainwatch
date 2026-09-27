@@ -132,7 +132,7 @@ def main():
                         pass
                     time.sleep(0.5)
                 assert snapshot and len(snapshot["nodes"]) == 2 and len(snapshot["links"]) == 2, snapshot
-                assert all(node["system"]["version"] == "0.5.0" for node in snapshot["nodes"]), snapshot
+                assert all(node["system"]["version"] == "0.5.1" for node in snapshot["nodes"]), snapshot
                 request = urllib.request.Request(base + "/", headers={"Cookie": cookie})
                 html = urllib.request.urlopen(request, context=context, timeout=2).read().decode()
                 assert "Chainwatch" in html
@@ -146,7 +146,7 @@ def main():
                     assert response.status == 200
                     if path == "/api/version":
                         versions = json.load(response)
-                        assert versions["hub"] == "0.5.0" and versions["frontend"] == "0.5.0"
+                        assert versions["hub"] == "0.5.1" and versions["frontend"] == "0.5.1"
                 print("smoke OK: HTTPS login, two reports, two links, diagnosis, versions, embedded Next.js assets")
             finally:
                 agent_proc.terminate()
