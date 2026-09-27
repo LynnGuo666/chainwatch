@@ -79,6 +79,25 @@ def main():
                 assert login_response.status == 204
                 cookie = login_response.headers["Set-Cookie"].split(";", 1)[0]
                 assert "Secure" in login_response.headers["Set-Cookie"]
+                topology_request = urllib.request.Request(base + "/api/topology", headers={"Cookie": cookie})
+                topology_body = urllib.request.urlopen(topology_request, context=context, timeout=2).read()
+                assert agent_key.encode() not in topology_body, "agent key leaked through topology"
+                assert len(json.loads(topology_body)) == 2
+                edit_request = urllib.request.Request(
+                    base + "/api/nodes/edge", data=json.dumps({"name": "Edited Edge", "note": "Test node"}).encode(),
+                    headers={"Cookie": cookie, "Origin": base, "Content-Type": "application/json"}, method="PUT",
+                )
+                assert urllib.request.urlopen(edit_request, context=context, timeout=2).status == 200
+                topology = json.load(urllib.request.urlopen(topology_request, context=context, timeout=2))
+                assert topology[1]["name"] == "Edited Edge" and topology[1]["note"] == "Test node"
+                forbidden_request = urllib.request.Request(
+                    base + "/api/nodes/edge", data=b'{}', headers={"Cookie": cookie, "Origin": "https://evil.example"}, method="PUT",
+                )
+                try:
+                    urllib.request.urlopen(forbidden_request, context=context, timeout=2)
+                    raise AssertionError("cross-origin edit succeeded")
+                except urllib.error.HTTPError as error:
+                    assert error.code == 403
                 snapshot = None
                 for _ in range(30):
                     try:
@@ -90,7 +109,7 @@ def main():
                         pass
                     time.sleep(0.5)
                 assert snapshot and len(snapshot["nodes"]) == 2 and len(snapshot["links"]) == 2, snapshot
-                assert all(node["system"]["version"] == "0.2.3" for node in snapshot["nodes"]), snapshot
+                assert all(node["system"]["version"] == "0.3.0" for node in snapshot["nodes"]), snapshot
                 request = urllib.request.Request(base + "/", headers={"Cookie": cookie})
                 html = urllib.request.urlopen(request, context=context, timeout=2).read().decode()
                 assert "Chainwatch" in html
@@ -104,7 +123,7 @@ def main():
                     assert response.status == 200
                     if path == "/api/version":
                         versions = json.load(response)
-                        assert versions["hub"] == "0.2.3" and versions["frontend"] == "0.2.3"
+                        assert versions["hub"] == "0.3.0" and versions["frontend"] == "0.3.0"
                 print("smoke OK: HTTPS login, two reports, two links, diagnosis, versions, embedded Next.js assets")
             finally:
                 agent_proc.terminate()

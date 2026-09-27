@@ -11,13 +11,13 @@ cd .. && go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpa
 
 `web/out` is embedded in the binary. The server needs no Node.js runtime. GitHub Actions runs the same steps and uploads the Linux binary.
 
-Build hub and agents from the same release commit (`v0.2.3` or newer). The hub rejects reports from agents on a different version with HTTP 426; update the agent before the hub when upgrading from `v0.1.0`. Actions injects the commit SHA into the Go binary and frontend build.
+Build hub and agents from the same release commit (`v0.3.0` or newer). The hub rejects reports from agents on a different version with HTTP 426; update the agent before the hub when upgrading from `v0.1.0`. Actions injects the commit SHA into the Go binary and frontend build.
 
 ## Configure
 
 Copy [hub.example.json](../configs/hub.example.json) and [agent.example.json](../configs/agent.example.json) to private files outside the repository. Replace every sample IP, ID, service, certificate and secret. Run `chainwatch gen-key` once per agent and put that value on the agent and in the hub's matching `nodes[].key`. Run `chainwatch hash-password` and enter a long password on stdin; put its hash in `web_password_hash`.
 
-Give configuration files mode `0600`. Add each agent as a separate node with its own key and optional exact `source_ip`. Keep the report listener on a private Tailscale address. HTTP reporting is rejected unless the hub address is Tailscale/loopback; use HTTPS for other private networks. The public dashboard listener needs an IP- or domain-valid TLS certificate.
+Give configuration files mode `0600`. Add each agent as a separate node with its own key and optional exact `source_ip`. Set `public_ip` and `tailscale_ip` on the hub and each configured node so the dashboard shows the source IP of each directed probe. Names and notes can then be edited in the authenticated dashboard without changing probe IDs. Keep the report listener on a private Tailscale address. HTTP reporting is rejected unless the hub address is Tailscale/loopback; use HTTPS for other private networks. The public dashboard listener needs an IP- or domain-valid TLS certificate.
 
 Only attach `tailscale_peer` to one link for each source/peer pair, to avoid double counting that peer's traffic in summaries. Interface byte counters represent the host's NIC traffic; Tailscale peer counters represent tunnel traffic and do not equal provider billing.
 
